@@ -10,23 +10,16 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.coprocessor.BaseMasterObserver;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.master.MasterServices;
-import org.apache.hadoop.hbase.master.TableLockManager;
-import org.apache.hadoop.hbase.master.handler.CreateTableHandler;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.hbck.TableLockChecker;
-import org.apache.hadoop.hbase.zookeeper.ZKTableStateManager;
 
-import ac.ku.milab.hbaseindex.IdxColumnQualifier;
 import ac.ku.milab.hbaseindex.IdxManager;
 import ac.ku.milab.hbaseindex.util.IdxConstants;
 import ac.ku.milab.hbaseindex.util.TableUtils;
-import ac.ku.milab.hbaseindex.util.ValueType;
 
 public class IndexMasterObserver extends BaseMasterObserver {
 
@@ -73,9 +66,26 @@ public class IndexMasterObserver extends BaseMasterObserver {
 			HTableDescriptor indextable = new HTableDescriptor(idxTName);
 			HColumnDescriptor indCol = new HColumnDescriptor(IdxConstants.IDX_FAMILY);
 			indextable.addFamily(indCol);
-			HRegionInfo[] hRegionInfos = new HRegionInfo[]{new HRegionInfo(idxTName, null, null)};
 			master.createTable(indextable, null, 0, 0);
-		}else{
+			
+			List<HRegionInfo> list = new ArrayList<HRegionInfo>();
+			list.add(new HRegionInfo(idxTName, null, null));
+			//HRegionInfo[] hRegionInfos = new HRegionInfo[]{new HRegionInfo(idxTName, null, null)};
+			//master.crate
+			
+			try {
+				master.getAssignmentManager().assign(list);
+				LOG.info("assign complete");
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				LOG.info("assign error");
+				e.printStackTrace();
+			}
+			//master.getAssignmentManager().assi
+		}else if(TableUtils.isIndexTable(Bytes.toBytes(tableName))){
+			MasterServices master = ctx.getEnvironment().getMasterServices();
+		}else
+			{
 			LOG.info("System Table or Index Table");
 		}
 

@@ -12,13 +12,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.ClusterStatus;
-import org.apache.hadoop.hbase.HBaseIOException;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.ServerName;
-import org.apache.hadoop.hbase.master.LoadBalancer;
 import org.apache.hadoop.hbase.master.MasterServices;
 import org.apache.hadoop.hbase.master.RegionPlan;
-import org.apache.hadoop.hbase.master.balancer.BaseLoadBalancer;
 import org.apache.hadoop.hbase.master.balancer.StochasticLoadBalancer;
 import org.apache.hadoop.hbase.util.Bytes;
 
@@ -272,13 +269,80 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 	 */
 
 	// Creates the index region plan based on the corresponding user region plan
+	private List<RegionPlan> prepareIndexPlan(Map<ServerName, List<HRegionInfo>> indexClusterState,
+			List<RegionPlan> regionPlanList, List<RegionPlan> regionPlanListCopy) {
+
+		for (RegionPlan regionPlan : regionPlanListCopy) {
+			HRegionInfo regionInfo = regionPlan.getRegionInfo();
+
+			for (Entry<ServerName, List<HRegionInfo>> serverVsRegionList : indexClusterState.entrySet()) {
+				List<HRegionInfo> indexRegions = serverVsRegionList.getValue();
+				ServerName server = serverVsRegionList.getKey();
+				if (regionPlan.getDestination().equals(server)) {
+					// desination server in the region plan is new and should
+					// not be same with this
+					// server in index cluster state.thats why skipping regions
+					// check in this server
+					continue;
+				}
+				String actualTableName = null;
+
+				boolean isExist = false;
+				HRegionInfo indexRegionInfo = null;
+				for (int i = 0; i < indexRegions.size(); i++) {
+					indexRegionInfo = indexRegions.get(i);
+					String indexTableName = indexRegionInfo.getTable().getNameAsString();
+					actualTableName = TableUtils.extractTableName(indexTableName);
+					if (regionInfo.getTable().getNameAsString().equals(actualTableName) == false) {
+						continue;
+					}
+//					if (Bytes.compareTo(regionInfo.getStartKey(), indexRegionInfo.getStartKey()) != 0) {
+//						continue;
+//					}
+					if(indexRegionInfo.getStartKey()==null){
+						LOG.info("i00000");
+					}else{
+						LOG.info("ilength-"+indexRegionInfo.getStartKey());
+					}
+					
+					if(regionInfo.getStartKey()==null){
+						LOG.info("r00000");
+					}else{
+						LOG.info("rlength-"+regionInfo.getStartKey());
+					}
+					
+					if(!Bytes.contains(indexRegionInfo.getStartKey(), regionInfo.getStartKey())){
+						continue;
+					}
+					isExist = true;
+					break;
+				}
+				if (isExist) {
+					RegionPlan rp = new RegionPlan(indexRegionInfo, server, regionPlan.getDestination());
+
+					putRegionPlan(indexRegionInfo, regionPlan.getDestination());
+					regionPlanList.add(rp);
+				}
+				continue;
+			}
+		}
+		for (RegionPlan plan : regionPlanList) {
+
+		}
+		regionPlanListCopy.clear();
+		// if no user regions to balance then return newly formed index region
+		// plan.
+
+		return regionPlanList;
+	}
+	
 //	private List<RegionPlan> prepareIndexPlan(Map<ServerName, List<HRegionInfo>> indexClusterState,
 //			List<RegionPlan> regionPlanList, List<RegionPlan> regionPlanListCopy) {
 //
-//		for (RegionPlan regionPlan : regionPlanListCopy) {
+//		OUTER_LOOP: for (RegionPlan regionPlan : regionPlanListCopy) {
 //			HRegionInfo regionInfo = regionPlan.getRegionInfo();
 //
-//			for (Entry<ServerName, List<HRegionInfo>> serverVsRegionList : indexClusterState.entrySet()) {
+//			MIDDLE_LOOP: for (Entry<ServerName, List<HRegionInfo>> serverVsRegionList : indexClusterState.entrySet()) {
 //				List<HRegionInfo> indexRegions = serverVsRegionList.getValue();
 //				ServerName server = serverVsRegionList.getKey();
 //				if (regionPlan.getDestination().equals(server)) {
@@ -286,14 +350,11 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 //					// not be same with this
 //					// server in index cluster state.thats why skipping regions
 //					// check in this server
-//					continue;
+//					continue MIDDLE_LOOP;
 //				}
 //				String actualTableName = null;
 //
-//				boolean isExist = false;
-//				HRegionInfo indexRegionInfo = null;
-//				for (int i = 0; i < indexRegions.size(); i++) {
-//					indexRegionInfo = indexRegions.get(i);
+//				for (HRegionInfo indexRegionInfo : indexRegions) {
 //					String indexTableName = indexRegionInfo.getTable().getNameAsString();
 //					actualTableName = TableUtils.extractTableName(indexTableName);
 //					if (regionInfo.getTable().getNameAsString().equals(actualTableName) == false) {
@@ -302,20 +363,13 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 //					if (Bytes.compareTo(regionInfo.getStartKey(), indexRegionInfo.getStartKey()) != 0) {
 //						continue;
 //					}
-//					isExist = true;
-//					break;
-//				}
-//				if (isExist) {
 //					RegionPlan rp = new RegionPlan(indexRegionInfo, server, regionPlan.getDestination());
 //
 //					putRegionPlan(indexRegionInfo, regionPlan.getDestination());
 //					regionPlanList.add(rp);
+//					continue OUTER_LOOP;
 //				}
-//				continue;
 //			}
-//		}
-//		for (RegionPlan plan : regionPlanList) {
-//
 //		}
 //		regionPlanListCopy.clear();
 //		// if no user regions to balance then return newly formed index region
@@ -323,48 +377,6 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 //
 //		return regionPlanList;
 //	}
-	
-	private List<RegionPlan> prepareIndexPlan(Map<ServerName, List<HRegionInfo>> indexClusterState,
-			List<RegionPlan> regionPlanList, List<RegionPlan> regionPlanListCopy) {
-
-		OUTER_LOOP: for (RegionPlan regionPlan : regionPlanListCopy) {
-			HRegionInfo regionInfo = regionPlan.getRegionInfo();
-
-			MIDDLE_LOOP: for (Entry<ServerName, List<HRegionInfo>> serverVsRegionList : indexClusterState.entrySet()) {
-				List<HRegionInfo> indexRegions = serverVsRegionList.getValue();
-				ServerName server = serverVsRegionList.getKey();
-				if (regionPlan.getDestination().equals(server)) {
-					// desination server in the region plan is new and should
-					// not be same with this
-					// server in index cluster state.thats why skipping regions
-					// check in this server
-					continue MIDDLE_LOOP;
-				}
-				String actualTableName = null;
-
-				for (HRegionInfo indexRegionInfo : indexRegions) {
-					String indexTableName = indexRegionInfo.getTable().getNameAsString();
-					actualTableName = TableUtils.extractTableName(indexTableName);
-					if (regionInfo.getTable().getNameAsString().equals(actualTableName) == false) {
-						continue;
-					}
-					if (Bytes.compareTo(regionInfo.getStartKey(), indexRegionInfo.getStartKey()) != 0) {
-						continue;
-					}
-					RegionPlan rp = new RegionPlan(indexRegionInfo, server, regionPlan.getDestination());
-
-					putRegionPlan(indexRegionInfo, regionPlan.getDestination());
-					regionPlanList.add(rp);
-					continue OUTER_LOOP;
-				}
-			}
-		}
-		regionPlanListCopy.clear();
-		// if no user regions to balance then return newly formed index region
-		// plan.
-
-		return regionPlanList;
-	}
 
 	/**
 	 * @param regionPlanList

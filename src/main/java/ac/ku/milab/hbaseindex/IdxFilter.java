@@ -5,18 +5,20 @@ import java.io.IOException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Cell;
-import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.filter.FilterBase;
-import org.apache.hadoop.hbase.filter.Filter.ReturnCode;
 import org.apache.hadoop.hbase.util.Bytes;
 
 public class IdxFilter extends FilterBase {
 	
-	private byte[] qualifier = null;
-	private byte[] qualNum = null;
-	private byte[] value = null;
+	byte[] zero = Bytes.toBytes(0l);
+	
+	private byte[] carNum = null;
+	private byte[] startTime = Bytes.copy(zero);
+	private byte[] endTime = Bytes.copy(zero);
 	private boolean filterRow = false;
+	
+	
 	
 	private static final Log LOG = LogFactory.getLog(IdxFilter.class.getName());
 	
@@ -24,24 +26,22 @@ public class IdxFilter extends FilterBase {
 		super();
 	}
 	
-	public IdxFilter(byte[] qualifier, byte[] value){
-		this.qualifier = qualifier;
-		this.qualNum = getQualNumber(qualifier);
-		this.value = value;
+	public IdxFilter(byte[] carNum){
+		this.carNum = carNum;
 	}
 	
-	public IdxFilter(byte[] qualifier, byte[] value, boolean filterRow){
-		this.qualifier = qualifier;
-		this.qualNum = getQualNumber(qualifier);
-		this.value = value;
+	public IdxFilter(byte[] carNum, byte[] startTime, byte[] endTime, boolean filterRow){
+		this.carNum = carNum;
+		this.startTime = startTime;
+		this.endTime = endTime;
 		this.filterRow = filterRow;
 	}
 	
-	private byte[] getQualNumber(byte[] qual){
-		int qLength = Bytes.toBytes("q").length;
-
-		return Bytes.copy(qual,qLength, qual.length-qLength);
-	}
+//	private byte[] getQualNumber(byte[] qual){
+//		int qLength = Bytes.toBytes("q").length;
+//
+//		return Bytes.copy(qual,qLength, qual.length-qLength);
+//	}
 	
 	@Override
 	public boolean filterRowKey(byte[] buffer, int offset, int length) throws IOException {
@@ -51,9 +51,13 @@ public class IdxFilter extends FilterBase {
 		//LOG.info("buffer is : "+Bytes.toString(rowkey));
 		byte[] carNum = Bytes.copy(rowkey, 0, 9);
 		byte[] time = Bytes.copy(rowkey, 10, 8);
-		String rowKey = Bytes.toString(rowkey);
-		byte[] query = Bytes.add(Bytes.toBytes("idx"),this.qualNum,this.value);
-		query = Bytes.add(query, Bytes.toBytes("2v"));
+		
+		if(Bytes.equals(carNum, this.carNum)){
+			LOG.info("COLLECT");
+		}
+//		String rowKey = Bytes.toString(rowkey);
+//		byte[] query = Bytes.add(Bytes.toBytes("idx"),this.qualNum,this.value);
+//		byte[] query = Bytes.add(query, Bytes.toBytes("2v"));
 		//String qualValue = rowKey.split("idx")[1];
 		//String val = Bytes.toString(this.value);
 		//LOG.info("qual value is : "+ qualValue);
@@ -64,13 +68,13 @@ public class IdxFilter extends FilterBase {
 //			return true;
 //		}
 		
-		if(Bytes.contains(rowkey, query)){
-			return false;
-		}else{
-			return true;
-		}
-		
-		//return super.filterRowKey(buffer, offset, length);
+//		if(Bytes.contains(rowkey, query)){
+//			return false;
+//		}else{
+//			return true;
+//		}
+	
+		return super.filterRowKey(buffer, offset, length);
 		
 	}
 	
@@ -118,11 +122,21 @@ public class IdxFilter extends FilterBase {
 	
 	@Override
 	public byte[] toByteArray(){
+//		byte[] array = new byte[0];
+//		array = Bytes.add(array, Bytes.toBytes(this.qualifier.length));
+//		array = Bytes.add(array, this.qualifier);
+//		array = Bytes.add(array, Bytes.toBytes(this.value.length));
+//		array = Bytes.add(array, this.value);
+//		array = Bytes.add(array, Bytes.toBytes(this.filterRow));
+//		return array;
+		
 		byte[] array = new byte[0];
-		array = Bytes.add(array, Bytes.toBytes(this.qualifier.length));
-		array = Bytes.add(array, this.qualifier);
-		array = Bytes.add(array, Bytes.toBytes(this.value.length));
-		array = Bytes.add(array, this.value);
+		array = Bytes.add(array, Bytes.toBytes(this.carNum.length));
+		array = Bytes.add(array, this.carNum);
+		//array = Bytes.add(array, Bytes.toBytes(this.startTime.length));
+		array = Bytes.add(array, this.startTime);
+		//array = Bytes.add(array, Bytes.toBytes(this.endTime.length));
+		array = Bytes.add(array, this.endTime);
 		array = Bytes.add(array, Bytes.toBytes(this.filterRow));
 		return array;
 	}
@@ -131,19 +145,18 @@ public class IdxFilter extends FilterBase {
 		IdxFilter filter = null;
 		int length = bytes.length;
 		
-		byte[] qualLength = Bytes.copy(bytes, 0, 4);
-		int qualLen = Bytes.toInt(qualLength);
+		byte[] carNumLength = Bytes.copy(bytes, 0, 4);
+		int iCarNumLength = Bytes.toInt(carNumLength);
 		
-		byte[] qualifier = Bytes.copy(bytes, 4, qualLen);
+		byte[] carNum = Bytes.copy(bytes, 4, iCarNumLength);
 		
-		byte[] valLeng = Bytes.copy(bytes, 4+qualLen, 4);
-		int valLen = Bytes.toInt(valLeng);
+		byte[] startTime = Bytes.copy(bytes, 4 + iCarNumLength, 8);
+		byte[] endTime = Bytes.copy(bytes, 12 + iCarNumLength, 8);
 		
-		byte[] val = Bytes.copy(bytes, 8+qualLen, valLen);
+		byte[] fRow = Bytes.copy(bytes, 20+iCarNumLength, 1);
 		
-		byte[] fRow = Bytes.copy(bytes, 8+qualLen+valLen, 1);
 		boolean filterRow = Bytes.toBoolean(fRow);
-		filter = new IdxFilter(qualifier, val, filterRow);
+		filter = new IdxFilter(carNum, startTime, endTime, filterRow);
 		
 		return filter;
 	}

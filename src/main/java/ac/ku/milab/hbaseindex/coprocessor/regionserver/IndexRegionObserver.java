@@ -9,27 +9,26 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
-import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Durability;
+import org.apache.hadoop.hbase.client.IsolationLevel;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
-import org.apache.hadoop.hbase.regionserver.InternalScanner;
+import org.apache.hadoop.hbase.filter.Filter;
+import org.apache.hadoop.hbase.regionserver.HStore;
 import org.apache.hadoop.hbase.regionserver.KeyValueScanner;
 import org.apache.hadoop.hbase.regionserver.Region;
-import org.apache.hadoop.hbase.regionserver.ScanType;
+import org.apache.hadoop.hbase.regionserver.ScanInfo;
 import org.apache.hadoop.hbase.regionserver.Store;
-import org.apache.hadoop.hbase.regionserver.StoreFile;
-import org.apache.hadoop.hbase.regionserver.compactions.CompactionRequest;
+import org.apache.hadoop.hbase.regionserver.StoreScanner;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.util.Bytes;
 
-import ac.ku.milab.hbaseindex.IdxColumnQualifier;
-import ac.ku.milab.hbaseindex.IdxManager;
+import ac.ku.milab.hbaseindex.IdxFilter;
 import ac.ku.milab.hbaseindex.util.IdxConstants;
 import ac.ku.milab.hbaseindex.util.TableUtils;
 
@@ -51,16 +50,50 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			Scan scan, NavigableSet<byte[]> targetCols, KeyValueScanner s) throws IOException {
 		TableName tName = ctx.getEnvironment().getRegionInfo().getTable();
 		String tableName = tName.getNameAsString();
-		//
-		LOG.info("preScannerOpen START1 : " + tableName);
-		//
-		// // if table is not user table, it is not performed
+		
+		LOG.info("preStoreScannerOpen START : " + tableName);
+		
+		// if table is not user table, it is not performed
 		boolean isUserTable = TableUtils.isUserTable(Bytes.toBytes(tableName));
 		if (isUserTable) {
-
-		} else {
-
-			return s;
+			Filter f = scan.getFilter();
+			boolean isIndexFilter = (f instanceof IdxFilter);
+		if(f!=null && isIndexFilter){
+			
+			String idxTableName = TableUtils.getIndexTableName(tableName);
+			TableName idxTName = TableName.valueOf(idxTableName);
+			
+			List<Region> idxRegions = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+			Region idxRegion = idxRegions.get(0);
+			
+			//LOG.info("filter string : " + f.toString());
+			//Filter indFilter;
+			//Filter indFilter = new RowFilter(CompareOp.EQUAL, new
+			//BinaryComparator(Bytes.toBytes("idx1v1row1")));
+			
+			//LOG.info("preStoreScannerOpen User table : " + tableName + " & " +
+			// idxTableName);
+			
+			 Scan indScan = new Scan();
+			 //indScan.setStartRow(Bytes.toBytes("idx1v1"));
+			 //indScan.setStopRow(Bytes.toBytes("idx1v2"));
+			 //indScan.setFilter(indFilter);
+			 Map<byte[], NavigableSet<byte[]>> map = indScan.getFamilyMap();
+			 NavigableSet<byte[]> indCols = map.get(Bytes.toBytes("IND"));
+			 Store indStore = idxRegion.getStore(Bytes.toBytes("IND"));
+			 ScanInfo scanInfo = null;
+			 scanInfo = indStore.getScanInfo();
+			 long ttl = scanInfo.getTtl();
+			
+			 //LOG.info("filter string : " + indScan.getFilter().toString());
+			
+			 scanInfo = new ScanInfo(scanInfo.getConfiguration(),
+			 indStore.getFamily(), ttl,
+			 scanInfo.getTimeToPurgeDeletes(), scanInfo.getComparator());
+			 LOG.info("well done");
+			 ctx.complete();
+			 return new StoreScanner(indStore, scanInfo, indScan, indCols, ((HStore)indStore).getHRegion().getReadpoint(IsolationLevel.READ_COMMITTED));
+			 }
 		}
 		return s;
 	}
@@ -109,6 +142,7 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //
 //		}
 //	}
+	
 
 	@Override
 	public void preOpen(ObserverContext<RegionCoprocessorEnvironment> ctx) throws IOException {
