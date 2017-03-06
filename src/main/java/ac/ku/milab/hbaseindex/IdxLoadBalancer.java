@@ -2,10 +2,12 @@ package ac.ku.milab.hbaseindex;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.logging.Log;
@@ -189,8 +191,8 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 	public Map<ServerName, List<HRegionInfo>> roundRobinAssignment(List<HRegionInfo> regionList,
 			List<ServerName> serverList) {
 		LOG.info("Start roundRobinAssignment");
-		List<HRegionInfo> userRegions = new ArrayList<HRegionInfo>(1);
-		List<HRegionInfo> indexRegions = new ArrayList<HRegionInfo>(1);
+		List<HRegionInfo> userRegions = new ArrayList<HRegionInfo>();
+		List<HRegionInfo> indexRegions = new ArrayList<HRegionInfo>();
 
 		// separate user table and index table
 		for (HRegionInfo regionInfo : regionList) {
@@ -212,6 +214,7 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 			}
 		}
 		plan = prepareIndexRegionPlan(indexRegions, plan, serverList);
+		printPlan(plan);
 		return plan;
 	}
 	
@@ -293,6 +296,8 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 					indexRegionInfo = indexRegions.get(i);
 					String indexTableName = indexRegionInfo.getTable().getNameAsString();
 					actualTableName = TableUtils.extractTableName(indexTableName);
+					LOG.info("indextable : "+indexTableName);
+					LOG.info("actualtable : "+actualTableName);
 					if (regionInfo.getTable().getNameAsString().equals(actualTableName) == false) {
 						continue;
 					}
@@ -482,7 +487,7 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 
 	private Map<ServerName, List<HRegionInfo>> prepareIndexRegionPlan(List<HRegionInfo> indexRegions,
 			Map<ServerName, List<HRegionInfo>> plan, List<ServerName> serverList) {
-
+		LOG.info("prepareIndexRegionPlan start");
 		// if index regions don't exist, return plan
 		if (indexRegions != null && indexRegions.isEmpty() == false) {
 			if (plan == null) {
@@ -494,10 +499,19 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 				// with index region
 				ServerName destServer = getServerNameForIdxRegion(regionInfo);
 				List<HRegionInfo> destServerRegions = null;
+				
+				
 
 				// if can't find server, random assign region
 				if (destServer == null) {
+					LOG.info("Cannot find");
 					destServer = this.randomAssignment(regionInfo, serverList);
+					destServerRegions = plan.get(destServer);
+					if (destServerRegions == null) {
+						destServerRegions = new ArrayList<HRegionInfo>(1);
+						plan.put(destServer, destServerRegions);
+					}
+					destServerRegions.add(regionInfo);
 				}
 
 				// otherwise, assign region to server
@@ -523,27 +537,59 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 	 */
 
 	private ServerName getServerNameForIdxRegion(HRegionInfo regionInfo) {
+		LOG.info("getServerNameForIdxRegion Start");
 		String indexTableName = regionInfo.getTable().getNameAsString();
 		String userTableName = TableUtils.extractTableName(indexTableName);
 
 		synchronized (this.regionLocation) {
 			// get region and server of user table
+			LOG.info("getServerNameForIdxRegion Synch");
 			Map<HRegionInfo, ServerName> regionMap = regionLocation.get(userTableName);
 			if (regionMap == null) {
+				LOG.info("getServerNameForIdxRegion Null");
 				return null;
 			}
 
 			// check start key of all regions
 			// return server name if find region start key matched
+			LOG.info("getServerNameForIdxRegion loop");
 			for (Map.Entry<HRegionInfo, ServerName> entry : regionMap.entrySet()) {
 				HRegionInfo entryRegionInfo = entry.getKey();
-				if (Bytes.compareTo(entryRegionInfo.getStartKey(), regionInfo.getStartKey()) == 0) {
+				//if (Bytes.compareTo(entryRegionInfo.getStartKey(), regionInfo.getStartKey()) == 0) {
+				
+				if(entryRegionInfo.getStartKey()==null){
+					LOG.info("i00000");
+				}else{
+					LOG.info("ilength-"+entryRegionInfo.getStartKey());
+				}
+				
+				if(regionInfo.getStartKey()==null){
+					LOG.info("r00000");
+				}else{
+					LOG.info("rlength-"+regionInfo.getStartKey());
+				}
+				
+				if(Bytes.contains(entryRegionInfo.getStartKey(), regionInfo.getStartKey())){
 					putRegionPlan(regionInfo, entry.getValue());
 					return entry.getValue();
 				}
 			}
 		}
 		return null;
+	}
+	
+	private void printPlan(Map<ServerName, List<HRegionInfo>> plan){
+		Set<ServerName> setServer = plan.keySet();
+		Iterator<ServerName> iter = setServer.iterator();
+		while(iter.hasNext()){
+			ServerName name = iter.next();
+			List<HRegionInfo> list = plan.get(name);
+			for(HRegionInfo regionInfo : list){
+				LOG.info("print plan "+name+" : " + regionInfo.getTable().getNameAsString());
+			}
+			
+		}
+		
 	}
 
 }

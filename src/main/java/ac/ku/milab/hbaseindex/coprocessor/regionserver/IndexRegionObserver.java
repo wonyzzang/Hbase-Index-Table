@@ -19,6 +19,7 @@ import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.filter.Filter;
+import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HStore;
 import org.apache.hadoop.hbase.regionserver.KeyValueScanner;
 import org.apache.hadoop.hbase.regionserver.Region;
@@ -141,6 +142,59 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //		if (isUserTable) {
 //
 //		}
+//	}
+	@Override
+	public void postSplit(ObserverContext<RegionCoprocessorEnvironment> ctx, Region l, Region r) throws IOException {
+		// TODO Auto-generated method stub
+		TableName tableName = ctx.getEnvironment().getRegionInfo().getTable();
+		String sTableName = tableName.getNameAsString();
+		
+		boolean isUserTable = TableUtils.isUserTable(Bytes.toBytes(sTableName));
+		
+		if(isUserTable){
+			byte[] leftRegionKey = l.getRegionInfo().getStartKey();
+			byte[] rightRegionKey = r.getRegionInfo().getStartKey();
+			
+			String sIdxTableName = TableUtils.getIndexTableName(sTableName);
+			TableName idxTableName = TableName.valueOf(sIdxTableName);
+			
+			List<Region> idxRegionList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTableName);
+			for(Region idxRegion : idxRegionList){
+				byte[] regionKey = idxRegion.getRegionInfo().getStartKey();
+				if(Bytes.contains(regionKey, leftRegionKey)){
+					
+				}
+			}
+		}
+	}
+//	
+//	@Override
+//	public void postCompleteSplit(ObserverContext<RegionCoprocessorEnvironment> ctx) throws IOException {
+//		// TODO Auto-generated method stub
+//		RegionCoprocessorEnvironment env = ctx.getEnvironment();
+//		TableName tableName = env.getRegionInfo().getTable();
+//		String sTableName = tableName.getNameAsString();
+//		
+//		boolean isUserTable = TableUtils.isUserTable(Bytes.toBytes(sTableName));
+//		if(isUserTable){
+//			byte[] startKey = env.getRegionInfo().getStartKey();
+//			TableName idxTableName = TableName.valueOf(TableUtils.getIndexTableName(sTableName));
+//
+//			boolean isAlreadySplit = false;
+//			List<Region> idxRegionList = env.getRegionServerServices().getOnlineRegions(idxTableName);
+//			for(Region idxRegion : idxRegionList){
+//				byte[] regionKey = idxRegion.getRegionInfo().getStartKey();
+//				if(Bytes.contains(regionKey, startKey)){
+//					isAlreadySplit = true;
+//					break;
+//				}
+//			}
+//			
+//			if(!isAlreadySplit){
+//				
+//			}
+//		}
+//		
 //	}
 	
 

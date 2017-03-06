@@ -25,16 +25,16 @@ public class IndexMasterObserver extends BaseMasterObserver {
 
 	private static final Log LOG = LogFactory.getLog(IndexMasterObserver.class.getName());
 
-	private IdxManager indexManager = IdxManager.getInstance();
+	//private IdxManager indexManager = IdxManager.getInstance();
 
-	// Calling this function before creating user table
+	// Calling this function after creating user table
 	@Override
-	public void preCreateTable(ObserverContext<MasterCoprocessorEnvironment> ctx, HTableDescriptor desc,
+	public void postCreateTable(ObserverContext<MasterCoprocessorEnvironment> ctx, HTableDescriptor desc,
 			HRegionInfo[] regions) throws IOException {
-		
+		// TODO Auto-generated method stub
 		String tableName = desc.getNameAsString();
 		
-		LOG.info("PreCreateTable START : " + tableName);
+		LOG.info("PostCreateTable START : " + tableName);
 		
 		if(TableUtils.isUserTable(Bytes.toBytes(tableName))){
 			MasterServices master = ctx.getEnvironment().getMasterServices();
@@ -68,19 +68,19 @@ public class IndexMasterObserver extends BaseMasterObserver {
 			indextable.addFamily(indCol);
 			master.createTable(indextable, null, 0, 0);
 			
-			List<HRegionInfo> list = new ArrayList<HRegionInfo>();
-			list.add(new HRegionInfo(idxTName, null, null));
+//			List<HRegionInfo> list = new ArrayList<HRegionInfo>();
+//			list.add(new HRegionInfo(idxTName, null, null));
 			//HRegionInfo[] hRegionInfos = new HRegionInfo[]{new HRegionInfo(idxTName, null, null)};
 			//master.crate
 			
-			try {
-				master.getAssignmentManager().assign(list);
-				LOG.info("assign complete");
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				LOG.info("assign error");
-				e.printStackTrace();
-			}
+//			try {
+//				master.getAssignmentManager().assign(list);
+//				LOG.info("assign complete");
+//			} catch (InterruptedException e) {
+//				// TODO Auto-generated catch block
+//				LOG.info("assign error");
+//				e.printStackTrace();
+//			}
 			//master.getAssignmentManager().assi
 		}else if(TableUtils.isIndexTable(Bytes.toBytes(tableName))){
 			MasterServices master = ctx.getEnvironment().getMasterServices();
@@ -89,7 +89,7 @@ public class IndexMasterObserver extends BaseMasterObserver {
 			LOG.info("System Table or Index Table");
 		}
 
-		LOG.info("PreCreateTable END");
+		LOG.info("PostCreateTable END");
 	}
 
 	// Calling this function before making user table disable
