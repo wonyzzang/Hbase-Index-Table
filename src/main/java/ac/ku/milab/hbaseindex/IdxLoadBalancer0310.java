@@ -24,11 +24,11 @@ import org.apache.hadoop.hbase.util.Bytes;
 import ac.ku.milab.hbaseindex.util.IdxConstants;
 import ac.ku.milab.hbaseindex.util.TableUtils;
 
-public class IdxLoadBalancer extends StochasticLoadBalancer {
+public class IdxLoadBalancer0310 extends StochasticLoadBalancer {
 	
 	private MasterServices master;
 
-	private static final Log LOG = LogFactory.getLog(IdxLoadBalancer.class);
+	private static final Log LOG = LogFactory.getLog(IdxLoadBalancer0310.class);
 
 	private Map<String, Map<HRegionInfo, ServerName>> regionLocation = new ConcurrentHashMap<String, Map<HRegionInfo, ServerName>>();
 	
@@ -471,7 +471,6 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 				regionMap = new ConcurrentHashMap<HRegionInfo, ServerName>(1);
 				this.regionLocation.put(tableName, regionMap);
 			}
-			LOG.info("put Region Plan - " + regionInfo.getRegionNameAsString() + "," + serverName);
 			regionMap.put(regionInfo, serverName);
 		}
 	}
@@ -554,46 +553,25 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 			// check start key of all regions
 			// return server name if find region start key matched
 			LOG.info("getServerNameForIdxRegion loop");
-			Map<ServerName, Integer> numberOfRegions = new HashMap<ServerName,Integer>();
 			for (Map.Entry<HRegionInfo, ServerName> entry : regionMap.entrySet()) {
-				ServerName name = entry.getValue();
-				if(numberOfRegions.containsKey(name)){
-					int num = numberOfRegions.get(name);
-					num++;
-					numberOfRegions.put(name, num);
-				}else{
-					numberOfRegions.put(name, 1);
-				}
-
-			}
-			
-			Map<HRegionInfo, ServerName> idxRegionMap = regionLocation.get(indexTableName);
-			if(idxRegionMap==null){
-				ServerName sn = regionMap.entrySet().iterator().next().getValue();
-				putRegionPlan(regionInfo, sn);
-				return sn;
+				HRegionInfo entryRegionInfo = entry.getKey();
+				//if (Bytes.compareTo(entryRegionInfo.getStartKey(), regionInfo.getStartKey()) == 0) {
 				
-			}
-			
-			Map<ServerName, Integer> numberOfIdxRegions = new HashMap<ServerName,Integer>();
-			for (Map.Entry<HRegionInfo, ServerName> entry : idxRegionMap.entrySet()) {
-				ServerName name = entry.getValue();
-				if(numberOfIdxRegions.containsKey(name)){
-					int num = numberOfIdxRegions.get(name);
-					num++;
-					numberOfIdxRegions.put(name, num);
+				if(entryRegionInfo.getStartKey()==null){
+					LOG.info("i00000");
 				}else{
-					numberOfIdxRegions.put(name, 1);
+					LOG.info("ilength-"+entryRegionInfo.getStartKey());
 				}
-
-			}
-			
-			for(ServerName sn : numberOfRegions.keySet()){
-				if(numberOfRegions.get(sn)<=numberOfIdxRegions.get(sn)){
-					continue;
+				
+				if(regionInfo.getStartKey()==null){
+					LOG.info("r00000");
 				}else{
-					putRegionPlan(regionInfo, sn);
-					return sn;
+					LOG.info("rlength-"+regionInfo.getStartKey());
+				}
+				
+				if(Bytes.contains(entryRegionInfo.getStartKey(), regionInfo.getStartKey())){
+					putRegionPlan(regionInfo, entry.getValue());
+					return entry.getValue();
 				}
 			}
 		}

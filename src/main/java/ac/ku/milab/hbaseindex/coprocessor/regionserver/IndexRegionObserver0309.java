@@ -10,7 +10,6 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
-import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
@@ -27,11 +26,9 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HStore;
 import org.apache.hadoop.hbase.regionserver.KeyValueScanner;
 import org.apache.hadoop.hbase.regionserver.Region;
-import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.regionserver.Region.Operation;
 import org.apache.hadoop.hbase.regionserver.RegionServerServices;
 import org.apache.hadoop.hbase.regionserver.ScanInfo;
-import org.apache.hadoop.hbase.regionserver.SplitTransaction;
 import org.apache.hadoop.hbase.regionserver.SplitTransactionFactory;
 import org.apache.hadoop.hbase.regionserver.SplitTransactionImpl;
 import org.apache.hadoop.hbase.regionserver.Store;
@@ -42,56 +39,25 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.PairOfSameType;
 import org.apache.hadoop.hbase.util.RegionSplitter;
 import org.apache.hadoop.hbase.util.RegionSplitter.HexStringSplit;
-import org.apache.hadoop.hbase.util.RegionSplitter.UniformSplit;
 
 import ac.ku.milab.hbaseindex.IdxFilter;
-import ac.ku.milab.hbaseindex.ZOrder;
 import ac.ku.milab.hbaseindex.util.IdxConstants;
 import ac.ku.milab.hbaseindex.util.TableUtils;
 
-public class IndexRegionObserver extends BaseRegionObserver {
+public class IndexRegionObserver0309 extends BaseRegionObserver {
 
-	private static final Log LOG = LogFactory.getLog(IndexRegionObserver.class.getName());
+	private static final Log LOG = LogFactory.getLog(IndexRegionObserver0309.class.getName());
 
 	//private IdxManager indexManager = IdxManager.getInstance();
 
 	private static final byte[] COLUMN_FAMILY = Bytes.toBytes("cf1");
 	private static int cnt = 0;
-	
-	private static int regionNum = 0;
 
 //	@Override
 //	public void stop(CoprocessorEnvironment e) throws IOException {
 //		// nothing to do here
 //	}
-	
-//	@Override
-//	public void start(CoprocessorEnvironment e) throws IOException {
-//		// TODO Auto-generated method stub
-//		RegionCoprocessorEnvironment env = (RegionCoprocessorEnvironment)e;
-//		
-//		TableName tName = TableName.valueOf("test");
-//		TableName idxName = TableName.valueOf("test_idx");
-//		
-//		byte[] regionKey = env.getRegionInfo().getStartKey();
-//		byte[] tableName = env.getRegionInfo().getTable().getName();
-//		
-//		boolean isUserTable = TableUtils.isUserTable(tableName);
-//		boolean isIndexTable = TableUtils.isIndexTable(tableName);
-//		
-//		if(isUserTable){
-//			List<Region> tableList = env.getRegionServerServices().getOnlineRegions(tName);
-//		}
-//		
-//		
-//		List<Region> idxTableList = env.getRegionServerServices().getOnlineRegions(idxName);
-//		
-//		if(tableList.size()!=0){
-//			for(Region r : tableList){
-//				
-//			}
-//		}
-//	}
+
 	@Override
 	public KeyValueScanner preStoreScannerOpen(ObserverContext<RegionCoprocessorEnvironment> ctx, Store store,
 			Scan scan, NavigableSet<byte[]> targetCols, KeyValueScanner s) throws IOException {
@@ -103,7 +69,6 @@ public class IndexRegionObserver extends BaseRegionObserver {
 		// if table is not user table, it is not performed
 		boolean isUserTable = TableUtils.isUserTable(Bytes.toBytes(tableName));
 		if (isUserTable) {
-			LOG.info("preStoreScannerOpen Region : " + ctx.getEnvironment().getRegionInfo().getRegionId());
 			Filter f = scan.getFilter();
 			boolean isIndexFilter = (f instanceof IdxFilter);
 		if(f!=null && isIndexFilter){
@@ -112,48 +77,7 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			TableName idxTName = TableName.valueOf(idxTableName);
 			
 			List<Region> idxRegions = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
-			if(idxRegions.size()==0){
-				return null;
-			}else{
-				int id = getRegionNumber(ctx.getEnvironment());
-				Region idxRegion = null;
-				for(int i=0;i<idxRegions.size();i++){
-					idxRegion = idxRegions.get(i);
-					CoprocessorEnvironment env = idxRegion.getCoprocessorHost().findCoprocessorEnvironment("ac.ku.milab.hbaseindex.coprocessor.regionserver.IndexRegionObserver");
-					int num = getRegionNumber((RegionCoprocessorEnvironment)env);
-					if(id==num){
-						break;
-					}
-				}
-				
-				double lat1 = 80.4;
-				double lon1 = 100.3;
-				
-				double lat2 = 81.1;
-				double lon2 = 101.7;
-				
-				int code1 = ZOrder.Encode(lat1, lon1);
-				int code2 = ZOrder.Encode(lat2+1, lon2+1);
-				
-				Scan indScan = new Scan();
-				
-				Map<byte[], NavigableSet<byte[]>> map = indScan.getFamilyMap();
-				 NavigableSet<byte[]> indCols = map.get(Bytes.toBytes("IND"));
-				 Store indStore = idxRegion.getStore(Bytes.toBytes("IND"));
-				 ScanInfo scanInfo = null;
-				 scanInfo = indStore.getScanInfo();
-				 long ttl = scanInfo.getTtl();
-				 
-				 scanInfo = new ScanInfo(scanInfo.getConfiguration(),
-						 indStore.getFamily(), ttl,
-						 scanInfo.getTimeToPurgeDeletes(), scanInfo.getComparator());
-				LOG.info("well done");
-				ctx.complete();
-						 
-				return new StoreScanner(indStore, scanInfo, indScan, indCols, ((HStore)indStore).getHRegion().getReadpoint(IsolationLevel.READ_COMMITTED));
-				}
-			
-			
+			Region idxRegion = idxRegions.get(0);
 			
 			//LOG.info("filter string : " + f.toString());
 			//Filter indFilter;
@@ -163,18 +87,25 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			//LOG.info("preStoreScannerOpen User table : " + tableName + " & " +
 			// idxTableName);
 			
-			 
-//			 indScan.setStartRow(Bytes.toBytes(code1));
-//			 indScan.setStopRow(Bytes.toBytes(code2));
-//			 scan.setStartRow(Bytes.toBytes(code1));
-//			 scan.setStopRow(Bytes.toBytes(code2));
+			 Scan indScan = new Scan();
 			 //indScan.setStartRow(Bytes.toBytes("idx1v1"));
 			 //indScan.setStopRow(Bytes.toBytes("idx1v2"));
 			 //indScan.setFilter(indFilter);
-			 
+			 Map<byte[], NavigableSet<byte[]>> map = indScan.getFamilyMap();
+			 NavigableSet<byte[]> indCols = map.get(Bytes.toBytes("IND"));
+			 Store indStore = idxRegion.getStore(Bytes.toBytes("IND"));
+			 ScanInfo scanInfo = null;
+			 scanInfo = indStore.getScanInfo();
+			 long ttl = scanInfo.getTtl();
 			
 			 //LOG.info("filter string : " + indScan.getFilter().toString());
 			
+			 scanInfo = new ScanInfo(scanInfo.getConfiguration(),
+			 indStore.getFamily(), ttl,
+			 scanInfo.getTimeToPurgeDeletes(), scanInfo.getComparator());
+			 LOG.info("well done");
+			 ctx.complete();
+			 return new StoreScanner(indStore, scanInfo, indScan, indCols, ((HStore)indStore).getHRegion().getReadpoint(IsolationLevel.READ_COMMITTED));
 			 }
 		}
 		return s;
@@ -270,17 +201,10 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			
 			for(Region idxRegion : idxRegionList){
 				byte[] regionKey = idxRegion.getRegionInfo().getStartKey();
-				//if(Bytes.contains(regionKey, leftRegionKey)){
+				if(Bytes.contains(regionKey, leftRegionKey)){
 					//HexStringSplit splitter = new RegionSplitter.HexStringSplit();
 					//splitter.split(leftRegionKey, rightRegionKey);
-					byte[] startKey = idxRegion.getRegionInfo().getStartKey();
-					
-					byte[] endKey = idxRegion.getRegionInfo().getEndKey();
-					UniformSplit split = new RegionSplitter.UniformSplit();
-					
-					byte[][] splitKey = split.split(2);
-					
-					SplitTransactionImpl splitter = new SplitTransactionImpl(idxRegion, splitKey[0]);
+					SplitTransactionImpl splitter = new SplitTransactionImpl(idxRegion, rightRegionKey);
 					if(splitter.prepare()){
 						try{
 							splitter.execute((Server)rsService, rsService);
@@ -289,7 +213,7 @@ public class IndexRegionObserver extends BaseRegionObserver {
 							e.printStackTrace();
 						}
 					}
-//					
+					
 //					byte[] splitKey = Bytes.add(Bytes.toBytes("22°Å1234"), Bytes.toBytes(14568879l));
 ////					HexStringSplit split = new RegionSplitter.HexStringSplit();
 ////					split.split(2);
@@ -313,7 +237,7 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //					
 //					r.closeRegionOperation();
 //					
-				//}
+				}
 			}
 		}
 	}
@@ -393,19 +317,13 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			Cell lonCell = list.get(3);
 			lon = CellUtil.cloneValue(lonCell);
 
-			//byte[] indexRowKey = Bytes.add(carNum, time);
-			//indexRowKey = Bytes.add(indexRowKey, lat, lon);
+			byte[] indexRowKey = Bytes.add(carNum, time);
+			indexRowKey = Bytes.add(indexRowKey, lat, lon);
 
 			String sCarNum = Bytes.toString(carNum);
 			long lTime = Bytes.toLong(time);
 			double dLat = Bytes.toDouble(lat);
 			double dLon = Bytes.toDouble(lon);
-			
-			int code = ZOrder.Encode(dLat, dLon);
-			byte[] bCode = Bytes.toBytes(code);
-			
-			byte[] indexRowKey = Bytes.add(bCode, time, carNum);
-			indexRowKey = Bytes.add(indexRowKey, lat, lon);
 			
 			//LOG.info("prePut processing - " + sCarNum + ","+lTime+","+dLat+","+dLon);
 
@@ -416,8 +334,8 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //			}
 
 			// get region
-//			HRegionInfo hRegionInfo = ctx.getEnvironment().getRegionInfo();
-//			Region region = ctx.getEnvironment().getRegion();
+			HRegionInfo hRegionInfo = ctx.getEnvironment().getRegionInfo();
+			Region region = ctx.getEnvironment().getRegion();
 
 			/*
 			 * index table rowkey = region start key + "idx" + all(qualifier
@@ -425,8 +343,8 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			 */
 
 			// get region start keys
-//			byte[] startKey = hRegionInfo.getStartKey();
-//			indexRowKey = Bytes.add(startKey, indexRowKey);
+			byte[] startKey = hRegionInfo.getStartKey();
+			indexRowKey = Bytes.add(startKey, indexRowKey);
 			//String startKey = Bytes.toString(hRegionInfo.getStartKey());
 			//String rowKey = startKey + "idx";
 
@@ -445,26 +363,26 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			idxPut.addColumn(IdxConstants.IDX_FAMILY, IdxConstants.IDX_QUALIFIER, IdxConstants.IDX_VALUE);
 
 			// index table and put
-//			List<Region> idxRegions = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
-//			int size = idxRegions.size();
-//			for(int i=0;i<size;i++){
-//				Region r = idxRegions.get(i);
-//				byte[] idxStartKey = r.getRegionInfo().getStartKey();
-//				int compareRes = Bytes.compareTo(indexRowKey, idxStartKey);
-//				if(compareRes!=-1){
-//					if(i==size-1||compareRes==0){
-//						//LOG.info("index OK");
-//						r.put(idxPut);
-//					}else{
-//						Region nextRegion = idxRegions.get(i+1);
-//						byte[] idxNextKey = nextRegion.getRegionInfo().getStartKey();
-//						if(Bytes.compareTo(indexRowKey, idxNextKey)==-1){
-//							//LOG.info("index OK");
-//							r.put(idxPut);
-//						}
-//					}
-//				}
-//			}
+			List<Region> idxRegions = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+			int size = idxRegions.size();
+			for(int i=0;i<size;i++){
+				Region r = idxRegions.get(i);
+				byte[] idxStartKey = r.getRegionInfo().getStartKey();
+				int compareRes = Bytes.compareTo(indexRowKey, idxStartKey);
+				if(compareRes!=-1){
+					if(i==size-1||compareRes==0){
+						//LOG.info("index OK");
+						r.put(idxPut);
+					}else{
+						Region nextRegion = idxRegions.get(i+1);
+						byte[] idxNextKey = nextRegion.getRegionInfo().getStartKey();
+						if(Bytes.compareTo(indexRowKey, idxNextKey)==-1){
+							//LOG.info("index OK");
+							r.put(idxPut);
+						}
+					}
+				}
+			}
 			//Region idxRegion = idxRegions.get(0);
 			//idxRegion.put(idxPut);
 			
@@ -530,6 +448,7 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //				
 //				r.closeRegionOperation();
 				
+				
 //				SplitTransactionImpl splitter = new SplitTransactionImpl(r, splitKey);
 //				if(splitter.prepare()){
 //					try{
@@ -557,91 +476,5 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //			throws IOException {
 //
 //	}
-	
-	@Override
-	public RegionScanner preScannerOpen(ObserverContext<RegionCoprocessorEnvironment> e, Scan scan, RegionScanner s)
-			throws IOException {
-		// TODO Auto-generated method stub
-		TableName tName = e.getEnvironment().getRegionInfo().getTable();
-		String tableName = tName.getNameAsString();
-		
-		
-		// LOG.info("PrePut START : " + tableName);
-
-		// if table is not user table, it is not performed
-		boolean isUserTable = TableUtils.isUserTable(Bytes.toBytes(tableName));
-		if (isUserTable) {
-			Filter f = scan.getFilter();
-			boolean isIndexFilter = (f instanceof IdxFilter);
-		if(f!=null && isIndexFilter){
-			double lat1 = 80.4;
-			double lon1 = 100.3;
-			
-			double lat2 = 81.1;
-			double lon2 = 101.7;
-			
-			
-			int code1 = ZOrder.Encode(lat1, lon1);
-			int code2 = ZOrder.Encode(lat2+1, lon2+1);
-			
-			scan.setStartRow(Bytes.toBytes(code1));
-			scan.setStopRow(Bytes.toBytes(code2));
-			
-			return super.preScannerOpen(e, scan, s);
-		}
-		
-		}
-		
-		return super.preScannerOpen(e, scan, s);
-	}
-	
-	public int getRegionNumber(RegionCoprocessorEnvironment env) throws IOException{
-		TableName tName = env.getRegionInfo().getTable();
-		byte[] tableName = tName.getName();
-		
-		boolean isUserTable = TableUtils.isUserTable(tableName);
-		
-		int number = 0;
-		if(isUserTable){
-			byte[] currentRegionKey = env.getRegionInfo().getStartKey();
-			List<Region> regionList = env.getRegionServerServices().getOnlineRegions(tName);
-			int size = regionList.size();
-			
-			for(int i=0;i<size;i++){
-				Region r = regionList.get(i);
-				byte[] regionKey = r.getRegionInfo().getStartKey();
-				int compareRes = Bytes.compareTo(regionKey, currentRegionKey);
-				if(compareRes<0){
-					number++;
-					
-				}else{
-				}
-			}
-			LOG.info("getRegionNumber " + env.getRegionInfo().getRegionNameAsString() +" : " + number);
-			return number;
-		}
-		
-		boolean isIndexTable = TableUtils.isIndexTable(tableName);
-		if(isIndexTable){
-			byte[] currentRegionKey = env.getRegionInfo().getStartKey();
-			List<Region> regionList = env.getRegionServerServices().getOnlineRegions(tName);
-			int size = regionList.size();
-			
-			for(int i=0;i<size;i++){
-				Region r = regionList.get(i);
-				byte[] regionKey = r.getRegionInfo().getStartKey();
-				int compareRes = Bytes.compareTo(regionKey, currentRegionKey);
-				if(compareRes<0){
-					number++;
-					
-				}else{
-				}
-			}
-			LOG.info("getRegionNumber " + env.getRegionInfo().getRegionNameAsString() +" : " + number);
-			return number;
-		}
-		LOG.info("getRegionNumber " + env.getRegionInfo().getRegionNameAsString() +" : " + number);
-		return number;
-	}
 
 }
