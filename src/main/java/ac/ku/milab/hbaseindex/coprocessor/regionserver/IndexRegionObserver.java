@@ -10,12 +10,18 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.CoordinatedStateManager;
+import org.apache.hadoop.hbase.CoordinatedStateManagerFactory;
 import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.hbase.MetaTableAccessor;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.Durability;
+import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.IsolationLevel;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Scan;
@@ -23,13 +29,22 @@ import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.filter.Filter;
+import org.apache.hadoop.hbase.ipc.RpcControllerFactory;
+import org.apache.hadoop.hbase.master.HMaster;
+import org.apache.hadoop.hbase.protobuf.RequestConverter;
+import org.apache.hadoop.hbase.protobuf.generated.AdminProtos.GetOnlineRegionRequest;
+import org.apache.hadoop.hbase.protobuf.generated.AdminProtos.GetOnlineRegionResponse;
+import org.apache.hadoop.hbase.protobuf.generated.AdminProtos.GetRegionInfoRequest;
+import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.RegionInfo;
 import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.regionserver.HStore;
 import org.apache.hadoop.hbase.regionserver.KeyValueScanner;
 import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.regionserver.Region.Operation;
 import org.apache.hadoop.hbase.regionserver.RegionServerServices;
+import org.apache.hadoop.hbase.regionserver.RegionSplitPolicy;
 import org.apache.hadoop.hbase.regionserver.ScanInfo;
 import org.apache.hadoop.hbase.regionserver.SplitTransaction;
 import org.apache.hadoop.hbase.regionserver.SplitTransactionFactory;
@@ -39,15 +54,27 @@ import org.apache.hadoop.hbase.regionserver.StoreScanner;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.KeyRange;
+import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.PairOfSameType;
+import org.apache.hadoop.hbase.util.RegionSplitCalculator;
 import org.apache.hadoop.hbase.util.RegionSplitter;
 import org.apache.hadoop.hbase.util.RegionSplitter.HexStringSplit;
+import org.apache.hadoop.hbase.util.RegionSplitter.SplitAlgorithm;
 import org.apache.hadoop.hbase.util.RegionSplitter.UniformSplit;
+import org.apache.hadoop.hbase.wal.DefaultWALProvider;
+import org.apache.hadoop.hbase.wal.WAL;
+import org.apache.hadoop.hbase.wal.WALFactory;
+import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
+import org.apache.zookeeper.KeeperException;
+
+import com.google.protobuf.RpcController;
 
 import ac.ku.milab.hbaseindex.IdxFilter;
 import ac.ku.milab.hbaseindex.ZOrder;
 import ac.ku.milab.hbaseindex.util.IdxConstants;
 import ac.ku.milab.hbaseindex.util.TableUtils;
+import io.netty.handler.ssl.OpenSslServerContext;
 
 public class IndexRegionObserver extends BaseRegionObserver {
 
@@ -57,6 +84,7 @@ public class IndexRegionObserver extends BaseRegionObserver {
 
 	private static final byte[] COLUMN_FAMILY = Bytes.toBytes("cf1");
 	private static int cnt = 0;
+	private static final byte[] BYTE_NULL = Bytes.toBytes("");
 	
 	private static int regionNum = 0;
 
@@ -224,8 +252,15 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //
 //		}
 //	}
+//	
+//	@Override
+//	public void preSplit(ObserverContext<RegionCoprocessorEnvironment> c, byte[] splitRow) throws IOException {
+//		// TODO Auto-generated method stub
+//		super.preSplit(c, splitRow);
+//	}
+	
 	@Override
-	public void postSplit(ObserverContext<RegionCoprocessorEnvironment> ctx, Region l, Region r) throws IOException {
+	public void preSplit(ObserverContext<RegionCoprocessorEnvironment> ctx) throws IOException {
 		// TODO Auto-generated method stub
 		TableName tableName = ctx.getEnvironment().getRegionInfo().getTable();
 		String sTableName = tableName.getNameAsString();
@@ -236,16 +271,75 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			RegionServerServices rsService = ctx.getEnvironment().getRegionServerServices();
 			ServerName serverName = rsService.getServerName();
 			
-			byte[] leftRegionKey = l.getRegionInfo().getStartKey();
-			byte[] rightRegionKey = r.getRegionInfo().getStartKey();
-			LOG.info("left key is" + leftRegionKey);
-			LOG.info("right key is" + rightRegionKey);
+			int regionNum = getRegionNumber(ctx.getEnvironment());
 			
 			String sIdxTableName = TableUtils.getIndexTableName(sTableName);
 			TableName idxTableName = TableName.valueOf(sIdxTableName);
 			
 			List<Region> idxRegionList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTableName);
+			Region idxRegion = null;
+			for(int i=0;i<idxRegionList.size();i++){
+				idxRegion = idxRegionList.get(i);
+				CoprocessorEnvironment env = idxRegion.getCoprocessorHost().findCoprocessorEnvironment("ac.ku.milab.hbaseindex.coprocessor.regionserver.IndexRegionObserver");
+				int idxRegionNum = getRegionNumber((RegionCoprocessorEnvironment)env);
+				
+				if(regionNum == idxRegionNum){
+					break;
+				}
+			}
 			
+			if(idxRegion!=null){
+				HexStringSplit split = new HexStringSplit();
+				//UniformSplit split = new RegionSplitter.UniformSplit();
+//				HRegion hRegion = (HRegion) idxRegion;
+				List<Store> stores = idxRegion.getStores();
+				byte[] splitPointFromLargestStore = null;
+				    long largestStoreSize = 0;
+				    for (Store s : stores) {
+				      byte[] splitPoint = s.getSplitPoint();
+				      long storeSize = s.getSize();
+				      if (splitPoint != null && largestStoreSize < storeSize) {
+				        splitPointFromLargestStore = splitPoint;
+				        largestStoreSize = storeSize;
+				      }
+				    }
+				//byte[][] splitKey = split.split(2);
+				    SplitTransactionImpl splitter = new SplitTransactionImpl(idxRegion, splitPointFromLargestStore);
+				//SplitTransactionImpl splitter = new SplitTransactionImpl(idxRegion, splitKey[0]);
+				if(splitter.prepare()){
+					try{
+						splitter.execute((Server)rsService, rsService);
+						LOG.info("Split Complete");
+					}catch(Exception e){
+						e.printStackTrace();
+					}
+				}
+			}
+
+		}
+	}
+//	@Override
+//	public void postSplit(ObserverContext<RegionCoprocessorEnvironment> ctx, Region l, Region r) throws IOException {
+//		// TODO Auto-generated method stub
+//		TableName tableName = ctx.getEnvironment().getRegionInfo().getTable();
+//		String sTableName = tableName.getNameAsString();
+//		
+//		boolean isUserTable = TableUtils.isUserTable(Bytes.toBytes(sTableName));
+//		
+//		if(isUserTable){
+//			RegionServerServices rsService = ctx.getEnvironment().getRegionServerServices();
+//			ServerName serverName = rsService.getServerName();
+//			
+//			byte[] leftRegionKey = l.getRegionInfo().getStartKey();
+//			byte[] rightRegionKey = r.getRegionInfo().getStartKey();
+//			LOG.info("left key is" + leftRegionKey);
+//			LOG.info("right key is" + rightRegionKey);
+//			
+//			String sIdxTableName = TableUtils.getIndexTableName(sTableName);
+//			TableName idxTableName = TableName.valueOf(sIdxTableName);
+//			
+//			List<Region> idxRegionList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTableName);
+//			
 //			for(Region idxRegion : idxRegionList){
 //				byte[] splitKey = Bytes.add(Bytes.toBytes("22°Å1234"), Bytes.toBytes(14568879l));
 //				
@@ -267,28 +361,32 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //				}
 //				
 //				r.closeRegionOperation();
-			
-			for(Region idxRegion : idxRegionList){
-				byte[] regionKey = idxRegion.getRegionInfo().getStartKey();
-				//if(Bytes.contains(regionKey, leftRegionKey)){
-					//HexStringSplit splitter = new RegionSplitter.HexStringSplit();
-					//splitter.split(leftRegionKey, rightRegionKey);
-					byte[] startKey = idxRegion.getRegionInfo().getStartKey();
-					
-					byte[] endKey = idxRegion.getRegionInfo().getEndKey();
-					UniformSplit split = new RegionSplitter.UniformSplit();
-					
-					byte[][] splitKey = split.split(2);
-					
-					SplitTransactionImpl splitter = new SplitTransactionImpl(idxRegion, splitKey[0]);
-					if(splitter.prepare()){
-						try{
-							splitter.execute((Server)rsService, rsService);
-							LOG.info("Split Complete");
-						}catch(Exception e){
-							e.printStackTrace();
-						}
-					}
+//			
+//			for(Region idxRegion :idxRegionList){
+//				
+//			}
+//			
+//			for(Region idxRegion : idxRegionList){
+//				byte[] regionKey = idxRegion.getRegionInfo().getStartKey();
+//				//if(Bytes.contains(regionKey, leftRegionKey)){
+//					//HexStringSplit splitter = new RegionSplitter.HexStringSplit();
+//					//splitter.split(leftRegionKey, rightRegionKey);
+//					byte[] startKey = idxRegion.getRegionInfo().getStartKey();
+//					
+//					byte[] endKey = idxRegion.getRegionInfo().getEndKey();
+//					UniformSplit split = new RegionSplitter.UniformSplit();
+//					
+//					byte[][] splitKey = split.split(2);
+//					
+//					SplitTransactionImpl splitter = new SplitTransactionImpl(idxRegion, splitKey[0]);
+//					if(splitter.prepare()){
+//						try{
+//							splitter.execute((Server)rsService, rsService);
+//							LOG.info("Split Complete");
+//						}catch(Exception e){
+//							e.printStackTrace();
+//						}
+//					}
 //					
 //					byte[] splitKey = Bytes.add(Bytes.toBytes("22°Å1234"), Bytes.toBytes(14568879l));
 ////					HexStringSplit split = new RegionSplitter.HexStringSplit();
@@ -313,10 +411,10 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //					
 //					r.closeRegionOperation();
 //					
-				//}
-			}
-		}
-	}
+//				}
+//			}
+//		}
+//	}
 //	
 //	@Override
 //	public void postCompleteSplit(ObserverContext<RegionCoprocessorEnvironment> ctx) throws IOException {
@@ -381,23 +479,32 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			byte[] lat = null;
 			byte[] lon = null;
 
-			Cell numCell = list.get(0);
-			carNum = CellUtil.cloneValue(numCell);
-
-			Cell timeCell = list.get(1);
-			time = CellUtil.cloneValue(timeCell);
-
-			Cell latCell = list.get(2);
+//			Cell numCell = list.get(0);
+//			carNum = CellUtil.cloneValue(numCell);
+//
+//			Cell timeCell = list.get(1);
+//			time = CellUtil.cloneValue(timeCell);
+//
+//			Cell latCell = list.get(2);
+//			lat = CellUtil.cloneValue(latCell);
+//
+//			Cell lonCell = list.get(3);
+//			lon = CellUtil.cloneValue(lonCell);
+			
+			Cell latCell = list.get(0);
 			lat = CellUtil.cloneValue(latCell);
 
-			Cell lonCell = list.get(3);
+			Cell lonCell = list.get(1);
 			lon = CellUtil.cloneValue(lonCell);
-
+			
+			byte[] rowKey = put.getRow();
+			carNum = Bytes.copy(rowKey, 0, 9);
+			time = Bytes.copy(rowKey, 9, 8);
 			//byte[] indexRowKey = Bytes.add(carNum, time);
 			//indexRowKey = Bytes.add(indexRowKey, lat, lon);
 
-			String sCarNum = Bytes.toString(carNum);
-			long lTime = Bytes.toLong(time);
+//			String sCarNum = Bytes.toString(carNum);
+//			long lTime = Bytes.toLong(time);
 			double dLat = Bytes.toDouble(lat);
 			double dLon = Bytes.toDouble(lon);
 			
@@ -406,6 +513,8 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			
 			byte[] indexRowKey = Bytes.add(bCode, time, carNum);
 			indexRowKey = Bytes.add(indexRowKey, lat, lon);
+			
+			
 			
 			//LOG.info("prePut processing - " + sCarNum + ","+lTime+","+dLat+","+dLon);
 
@@ -443,10 +552,13 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			// make put for index table
 			Put idxPut = new Put(indexRowKey);
 			idxPut.addColumn(IdxConstants.IDX_FAMILY, IdxConstants.IDX_QUALIFIER, IdxConstants.IDX_VALUE);
-
+			
+//			HTable idxTable = new HTable(ctx.getEnvironment().getConfiguration(), idxTName);
+//			idxTable.put(idxPut);
 			// index table and put
 //			List<Region> idxRegions = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
 //			int size = idxRegions.size();
+//			boolean isInThisRS = false;
 //			for(int i=0;i<size;i++){
 //				Region r = idxRegions.get(i);
 //				byte[] idxStartKey = r.getRegionInfo().getStartKey();
@@ -455,15 +567,165 @@ public class IndexRegionObserver extends BaseRegionObserver {
 //					if(i==size-1||compareRes==0){
 //						//LOG.info("index OK");
 //						r.put(idxPut);
+//						isInThisRS = true;
 //					}else{
 //						Region nextRegion = idxRegions.get(i+1);
 //						byte[] idxNextKey = nextRegion.getRegionInfo().getStartKey();
 //						if(Bytes.compareTo(indexRowKey, idxNextKey)==-1){
 //							//LOG.info("index OK");
 //							r.put(idxPut);
+//							isInThisRS = true;
 //						}
 //					}
 //				}
+//			}
+//			cnt++;
+//			if(cnt==100){
+//			}
+			List<Region> idxRegions = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+			int size = idxRegions.size();
+			boolean isInThisRS = false;
+			for(int i=0;i<size;i++){
+				Region r = idxRegions.get(i);
+				byte[] idxStartKey = r.getRegionInfo().getStartKey();
+				byte[] idxEndKey = r.getRegionInfo().getEndKey();
+				if(Bytes.compareTo(idxStartKey, BYTE_NULL)==0){
+					if(Bytes.compareTo(idxEndKey, BYTE_NULL)==0){
+						r.put(idxPut);
+						isInThisRS = true;
+					}else if(Bytes.compareTo(idxEndKey, indexRowKey)>0){
+						r.put(idxPut);
+						isInThisRS = true;
+					}
+				}else if(Bytes.compareTo(idxStartKey, BYTE_NULL)>0){
+					if(Bytes.compareTo(idxStartKey, indexRowKey)<0){
+						if(Bytes.compareTo(idxEndKey, BYTE_NULL)==0){
+							r.put(idxPut);
+							isInThisRS = true;
+						}else if(Bytes.compareTo(idxEndKey, indexRowKey)>0){
+							r.put(idxPut);
+							isInThisRS = true;
+						}
+					}else{
+						
+					}
+				}
+			}
+//			
+//			
+			if(isInThisRS==false){
+				HTable idxTable = new HTable(ctx.getEnvironment().getConfiguration(), idxTName);
+				idxTable.put(idxPut);
+			}
+//			if(isInThisRS==false){
+//				//MetaTableAccessor accessor = new MetaTableAccessor();
+//				List<Pair<HRegionInfo, ServerName>> idxRegionList = MetaTableAccessor.getTableRegionsAndLocations(new ZooKeeperWatcher(ctx.getEnvironment().getConfiguration(), null, null), ConnectionFactory.createConnection(), idxTName);
+//
+//				ServerName serverHere = ctx.getEnvironment().getRegionServerServices().getServerName();
+//
+//				for(Pair<HRegionInfo, ServerName> pair : idxRegionList){
+//					ServerName server = pair.getSecond();
+//					
+//					if(server.equals(serverHere)){
+//						continue;
+//					}else{
+//						HRegionInfo info = pair.getFirst();
+//
+//						byte[] idxStartKey = info.getStartKey();
+//						byte[] idxEndKey = info.getEndKey();
+//						if(Bytes.compareTo(idxStartKey, BYTE_NULL)==0){
+//							if(Bytes.compareTo(idxEndKey, BYTE_NULL)==0){
+//								List<Region> idxList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+//								if(idxList == null || idxList.size()==0){
+//									HTable idxTable = new HTable(ctx.getEnvironment().getConfiguration(), idxTName);
+//									HTableDescriptor desc = idxTable.getTableDescriptor();
+//									byte[] identifier = Bytes.toBytes("idx");
+//									WAL wal = WALFactory.getInstance(idxTable.getConfiguration()).getWAL(identifier);
+//									HRegion hRegion = HRegion.openHRegion(info, desc, wal, idxTable.getConfiguration());
+//									hRegion.put(idxPut);
+//								}else{
+//									HTableDescriptor desc = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName).get(0).getTableDesc();
+//									HRegion hRegion = HRegion.openHRegion(info, desc, ctx.getEnvironment().getRegionServerServices().getWAL(info), ctx.getEnvironment().getConfiguration());
+//									hRegion.put(idxPut);
+//								}	
+//							}else if(Bytes.compareTo(idxEndKey, indexRowKey)>0){
+//								List<Region> idxList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+//								if(idxList == null|| idxList.size()==0){
+//									HTable idxTable = new HTable(ctx.getEnvironment().getConfiguration(), idxTName);
+//									HTableDescriptor desc = idxTable.getTableDescriptor();
+//									byte[] identifier = Bytes.toBytes("idx");
+//									
+//									WAL wal = WALFactory.getInstance(idxTable.getConfiguration()).getWAL(identifier);
+//									HRegion hRegion = HRegion.openHRegion(info, desc, wal, idxTable.getConfiguration());
+//									hRegion.put(idxPut);
+//								}else{
+//									HTableDescriptor desc = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName).get(0).getTableDesc();
+//									HRegion hRegion = HRegion.openHRegion(info, desc, ctx.getEnvironment().getRegionServerServices().getWAL(info), ctx.getEnvironment().getConfiguration());
+//									hRegion.put(idxPut);
+//								}
+//							}
+//						}else if(Bytes.compareTo(idxStartKey, BYTE_NULL)>0){
+//							if(Bytes.compareTo(idxEndKey, BYTE_NULL)==0){
+//								List<Region> idxList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+//								if(idxList == null|| idxList.size()==0){
+//									HTable idxTable = new HTable(ctx.getEnvironment().getConfiguration(), idxTName);
+//									HTableDescriptor desc = idxTable.getTableDescriptor();
+//									byte[] identifier = Bytes.toBytes("idx");
+//									WAL wal = WALFactory.getInstance(idxTable.getConfiguration()).getWAL(identifier);
+//									HRegion hRegion = HRegion.openHRegion(info, desc, wal, idxTable.getConfiguration());
+//									hRegion.put(idxPut);
+//								}else{
+//									HTableDescriptor desc = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName).get(0).getTableDesc();
+//									HRegion hRegion = HRegion.openHRegion(info, desc, ctx.getEnvironment().getRegionServerServices().getWAL(info), ctx.getEnvironment().getConfiguration());
+//									hRegion.put(idxPut);
+//								}
+//							}else if(Bytes.compareTo(idxEndKey, indexRowKey)>0){
+//								List<Region> idxList = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName);
+//								if(idxList == null|| idxList.size()==0){
+//									HTable idxTable = new HTable(ctx.getEnvironment().getConfiguration(), idxTName);
+//									HTableDescriptor desc = idxTable.getTableDescriptor();
+//									byte[] identifier = Bytes.toBytes("idx");
+//									WAL wal = WALFactory.getInstance(idxTable.getConfiguration()).getWAL(identifier);
+//									HRegion hRegion = HRegion.openHRegion(info, desc, wal, idxTable.getConfiguration());
+//									hRegion.put(idxPut);
+//								}else{
+//									HTableDescriptor desc = ctx.getEnvironment().getRegionServerServices().getOnlineRegions(idxTName).get(0).getTableDesc();
+//									HRegion hRegion = HRegion.openHRegion(info, desc, ctx.getEnvironment().getRegionServerServices().getWAL(info), ctx.getEnvironment().getConfiguration());
+//									hRegion.put(idxPut);
+//								}
+//							}
+//						}
+//					}
+//				}
+//		}
+//			CoordinatedStateManager manager = CoordinatedStateManagerFactory.getCoordinatedStateManager(ctx.getEnvironment().getConfiguration());
+//			try {
+//				HMaster master = new HMaster(ctx.getEnvironment().getConfiguration(), manager);
+//				GetOnlineRegionRequest request = RequestConverter.buildGetOnlineRegionRequest();
+//				MetaTableAccessor accessor = new MetaTableAccessor();
+//				List<Pair<HRegionInfo, ServerName>> idxRegionList = accessor.getTableRegionsAndLocations(new ZooKeeperWatcher(ctx.getEnvironment().getConfiguration(), null, null), ConnectionFactory.createConnection(), idxTName);
+//				ServerName serverHere = ctx.getEnvironment().getRegionServerServices().getServerName();
+//				
+//				for(Pair<HRegionInfo, ServerName> pair : idxRegionList){
+//					ServerName server = pair.getSecond();
+//					if(server.equals(serverHere)){
+//						continue;
+//					}else{
+//						
+//					}
+//				}
+//				RpcController controller = RpcControllerFactory.instantiate(ctx.getEnvironment().getConfiguration()).newController();
+//				GetOnlineRegionResponse response = master.getMasterRpcServices().getOnlineRegion(controller, request);
+//				List<RegionInfo> regionList = response.getRegionInfoList();
+//				for(RegionInfo regionInfo : regionList){
+//					HRegionInfo info = HRegionInfo.convert(regionInfo);
+//					info.getse
+//				}
+				
+				//new HTable(conf, tableName)
+//			} catch (Exception e) {
+//				// TODO Auto-generated catch block
+//				e.printStackTrace();
 //			}
 			//Region idxRegion = idxRegions.get(0);
 			//idxRegion.put(idxPut);
@@ -574,11 +836,11 @@ public class IndexRegionObserver extends BaseRegionObserver {
 			Filter f = scan.getFilter();
 			boolean isIndexFilter = (f instanceof IdxFilter);
 		if(f!=null && isIndexFilter){
-			double lat1 = 80.4;
-			double lon1 = 100.3;
+			double lat1 = 34.0;
+			double lon1 = 30.0;
 			
-			double lat2 = 81.1;
-			double lon2 = 101.7;
+			double lat2 = 94.0;
+			double lon2 = 61.3;
 			
 			
 			int code1 = ZOrder.Encode(lat1, lon1);

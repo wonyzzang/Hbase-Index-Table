@@ -585,10 +585,15 @@ public class IdxLoadBalancer extends StochasticLoadBalancer {
 				}else{
 					numberOfIdxRegions.put(name, 1);
 				}
-
 			}
 			
 			for(ServerName sn : numberOfRegions.keySet()){
+				if(numberOfIdxRegions.get(sn)==null){
+					if(numberOfRegions.get(sn)>0){
+						putRegionPlan(regionInfo, sn);
+						return sn;
+					}
+				}
 				if(numberOfRegions.get(sn)<=numberOfIdxRegions.get(sn)){
 					continue;
 				}else{

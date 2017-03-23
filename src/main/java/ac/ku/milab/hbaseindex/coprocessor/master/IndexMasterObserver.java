@@ -82,8 +82,20 @@ public class IndexMasterObserver extends BaseMasterObserver {
 //				e.printStackTrace();
 //			}
 			//master.getAssignmentManager().assi
-		}else if(TableUtils.isIndexTable(Bytes.toBytes(tableName))){
-			MasterServices master = ctx.getEnvironment().getMasterServices();
+			
+//		}else if(TableUtils.isIndexTable(Bytes.toBytes(tableName))){
+//			MasterServices master = ctx.getEnvironment().getMasterServices();
+//			List<HRegionInfo> idxRegionList = new ArrayList<HRegionInfo>();
+//			for(HRegionInfo info : regions){
+//				idxRegionList.add(info);
+//			}
+//			try {
+//				//master.;
+//				//LOG.info("after creating index table, regions assign");
+//			} catch (InterruptedException e) {
+//				// TODO Auto-generated catch block
+//				e.printStackTrace();
+//			}
 		}else
 			{
 			LOG.info("System Table or Index Table");
@@ -91,6 +103,7 @@ public class IndexMasterObserver extends BaseMasterObserver {
 
 		LOG.info("PostCreateTable END");
 	}
+	
 
 	// Calling this function before making user table disable
 	@Override
